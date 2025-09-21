@@ -1,65 +1,120 @@
 import express from "express";
-import Password from "../models/Password.js";
 import auth from "../middleware/auth.js";
+import Password from "../models/Password.js";
 import { encrypt, decrypt } from "../utils/crypto.js";
 
 const router = express.Router();
 
-// Create
+/**
+ * @route   POST /api/passwords
+ * @desc    Create a new password entry
+ * @access  Private
+ */
 router.post("/", auth, async (req, res) => {
   try {
-    const { site, username, password, category, notes } = req.body;
+    const { siteName, category, website, username, password, notes } = req.body;
+
+    if (!siteName || !category || !username || !password) {
+      return res.status(400).json({ message: "Required fields missing" });
+    }
+
+    const encryptedPassword = encrypt(password);
+
     const newPassword = new Password({
-      userId: req.user.id,
-      site,
-      username,
-      password: encrypt(password), // encrypt before saving
+      user: req.user.id,
+      siteName,
       category,
-      notes
+      website,
+      username,
+      password: encryptedPassword,
+      notes,
     });
+
     await newPassword.save();
-    res.json(newPassword);
+    res.json({ message: "Password saved successfully", password: newPassword });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
   }
 });
 
-// Read all
+/**
+ * @route   GET /api/passwords
+ * @desc    Get all passwords for the logged-in user
+ * @access  Private
+ */
 router.get("/", auth, async (req, res) => {
   try {
-    const passwords = await Password.find({ userId: req.user.id }).populate("category", "name");
-    res.json(passwords.map(p => ({
-      ...p._doc,
-      password: decrypt(p.password), // decrypt before sending
-      category: p.category?.name || "Uncategorized"
-    })));
+    const passwords = await Password.find({ user: req.user.id });
+
+    // Decrypt passwords before sending back
+    const decrypted = passwords.map((entry) => ({
+      ...entry._doc,
+      password: decrypt(entry.password),
+    }));
+
+    res.json(decrypted);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
   }
 });
 
-// Update
+/**
+ * @route   PUT /api/passwords/:id
+ * @desc    Update a password entry
+ * @access  Private
+ */
 router.put("/:id", auth, async (req, res) => {
   try {
-    const { site, username, password, category, notes } = req.body;
+    const { siteName, category, website, username, password, notes } = req.body;
+
+    // Build update object
+    const updateData = {};
+    if (siteName) updateData.siteName = siteName;
+    if (category) updateData.category = category;
+    if (website) updateData.website = website;
+    if (username) updateData.username = username;
+    if (password) updateData.password = encrypt(password); // encrypt new password
+    if (notes) updateData.notes = notes;
+
     const updated = await Password.findOneAndUpdate(
-      { _id: req.params.id, userId: req.user.id },
-      { site, username, password: encrypt(password), category, notes },
+      { _id: req.params.id, user: req.user.id },
+      { $set: updateData },
       { new: true }
     );
-    res.json(updated);
+
+    if (!updated) {
+      return res.status(404).json({ message: "Password not found" });
+    }
+
+    res.json({ message: "Password updated", password: updated });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
   }
 });
 
-// Delete
+/**
+ * @route   DELETE /api/passwords/:id
+ * @desc    Delete a password entry
+ * @access  Private
+ */
 router.delete("/:id", auth, async (req, res) => {
   try {
-    await Password.findOneAndDelete({ _id: req.params.id, userId: req.user.id });
-    res.json({ message: "Password deleted" });
+    const deleted = await Password.findOneAndDelete({
+      _id: req.params.id,
+      user: req.user.id,
+    });
+
+    if (!deleted) {
+      return res.status(404).json({ message: "Password not found" });
+    }
+
+    res.json({ message: "Password deleted successfully" });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
   }
 });
 
